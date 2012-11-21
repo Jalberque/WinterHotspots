@@ -1,0 +1,472 @@
+﻿<!DOCTYPE html>
+<html>
+  <head>
+	<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    
+    <title>Winter Activities & Hot Spots</title>
+    
+	<!--[if lt IE 8]>
+	<script type="text/javascript">
+		alert("We're sorry, but your browser is not supported. To view this site, please update to the newest version.");
+		window.location.href = 'http://www.updateyourbrowser.net/en/';
+	</script>
+	<![endif]-->
+	
+    <link rel="stylesheet" href="http://code.jquery.com/mobile/1.0a4.1/jquery.mobile-1.0a4.1.min.css" />
+    <link rel="stylesheet" type="text/css" href="http://serverapi.arcgisonline.com/jsapi/arcgis/3.2/js/dojo/dijit/themes/claro/claro.css" />
+    <link rel="stylesheet" type="text/css" href="http://serverapi.arcgisonline.com/jsapi/arcgis/3.2/js/esri/css/esri.css" />
+    
+    <!-- ArcGIS API for JavaScript -->
+    <script type="text/javascript" src="http://serverapi.arcgisonline.com/jsapi/arcgis/?v=3.2compact"></script>
+    <script src="http://code.jquery.com/jquery-1.5.2.min.js"></script>
+    <script src="http://code.jquery.com/mobile/1.0a4.1/jquery.mobile-1.0a4.1.min.js"></script>
+	
+    
+    <style type="text/css">
+      #map {
+        width:100%;
+        height:100%;
+      }
+      .page-map #mapcontent, #map {
+        width: 100%;
+        height: 100%;
+        padding: 0;
+      }
+       .esriPopupMobile .titlePane .title {
+		white-space: normal;
+	  }
+	  .esriPopupMobile .titlePane {
+		min-height: 40px;
+		height: auto;
+	  }
+	  
+	  #footer {
+		text-align: center;
+	  }
+	  
+	  .ui-bar, .ui-body {
+		padding: 0.4em 12px;
+	  }
+	  
+	  #header .ui-title {
+		margin: 0.6em 0 0.8em;
+	  }
+	  
+	  .ui-li-has-thumb .ui-btn-inner a.ui-link-inherit, .ui-li-static.ui-li-has-thumb {
+		min-height: auto;
+		padding-left: 45px;
+	  }
+	  
+	  .ui-li-thumb, .ui-li-icon, .ui-li-content {
+		margin: 10px;
+	  }
+	  
+	  .ui-li .ui-btn-text a.ui-link-inherit {
+		white-space: normal;
+	  }
+	  
+	  .esriMobileInfoView {
+		overflow: visible !important;
+	  }
+
+    </style>
+    <script type="text/javascript">
+        //initialize dojo
+        dojo.require("esri.map");
+        dojo.require("esri.dijit.AttributeInspector-all");
+        dojo.require("esri.tasks.locator");
+        dojo.require("dijit.form.ComboBox");
+        dojo.require("esri.dijit.PopupMobile");
+
+        dojo.addOnLoad(init);
+
+        var map;
+        var locator;
+        var citizenRequestLayer, treeLightingLayer;
+
+        function init() {
+		
+            //This sample requires a proxy page to handle communications with the ArcGIS Server services. You will need to
+            //replace the url below with the location of a proxy on your machine. See the 'Using the proxy page' help topic
+            //for details on setting up a proxy page.
+            //esri.config.defaults.io.proxyUrl = "/arcgisserver/apis/javascript/proxy/proxy.ashx";
+            esri.config.defaults.io.proxyUrl = "proxy.ashx";
+
+            //define an initial extent (Seattle)
+            var initExtent = new esri.geometry.Extent({
+                "xmin": -7925550,
+                "ymin": 5193139,
+                "xmax": -7901349,
+                "ymax": 5219555,
+                "spatialReference": {
+                 "wkid": 102100
+                }
+            });
+
+            
+            var popup = new esri.dijit.PopupMobile(null, dojo.create("div"));
+
+            map = new esri.Map("map", {
+                extent: initExtent,
+                infoWindow: popup
+            });
+
+
+            //initialize the editor
+            dojo.connect(map, "onLayersAddResult", initEditor);
+            
+			//onorientationchange doesn't always fire in a timely manner in Android so check for both orientationchange and resize 
+            var supportsOrientationChange = "onorientationchange" in window,
+			orientationEvent = supportsOrientationChange ? "orientationchange" : "resize";
+
+			// orientationChanged() breaks IE
+			// if document.attachEvent is defined, it is an IE browser
+			if (document.addEventListener &&( document.attachEvent == undefined))
+			{
+				// non-IE
+				window.addEventListener(orientationEvent, function () {
+					orientationChanged();
+				}, false);
+			}
+
+            dojo.connect(map, "onLoad", function () {
+                //hookup jquery
+                $(document).ready(jQueryReady);
+            });
+
+            //add the world streetmap from arcgis online
+            var basemap = new esri.layers.ArcGISTiledMapServiceLayer("http://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer");
+            map.addLayer(basemap);
+
+            var treeTemplate = new esri.InfoTemplate();
+            treeTemplate.setTitle("<b>${LOCATION}</b>");
+            treeTemplate.setContent("<a href='${IMAGE_URL}' target='_blank'><img src='${IMAGE_URL}' style='max-height: 60%; max-width: 60%;'></a><br/><br/><b>What:</b>${LOCATION}<br/><b>When:</b>${DATE}<br/>");
+
+            //setup an info template to display basic info on requests (contact and date);
+            var template = new esri.InfoTemplate();
+            template.setTitle("<b>${TYPE}</b>");
+            template.setContent("<b>Name:</b> ${NAME}<br/><b>Comment:</b>${COMMENT}<br/>");
+
+            citizenRequestLayer = new esri.layers.FeatureLayer("http://maps.cityofboston.gov/ArcGIS/rest/services/CityServices/SpecialEvents/FeatureServer/1", {
+                mode: esri.layers.FeatureLayer.MODE_ONDEMAND,
+                infoTemplate: template,
+                outFields: ["*"]
+            });
+            //add the citizens request layer to the map as a feature layer
+
+            treeLightingLayer = new esri.layers.FeatureLayer("http://maps.cityofboston.gov/ArcGIS/rest/services/CityServices/SpecialEvents/MapServer/0", {
+                mode: esri.layers.FeatureLayer.MODE_ONDEMAND,
+                infoTemplate: treeTemplate,
+                outFields: ["*"]
+            });
+
+            dojo.connect(citizenRequestLayer, "onClick", function (evt) {
+                map.infoWindow.setFeatures([evt.graphic]);
+            });
+
+            dojo.connect(treeLightingLayer, "onClick", function (evt) {
+                map.infoWindow.setFeatures([evt.graphic]);
+            });
+
+            //setup the address locator
+            locator = new esri.tasks.Locator("http://sampleserver1.arcgisonline.com/ArcGIS/rest/services/Locators/ESRI_Geocode_USA/GeocodeServer");
+
+            map.addLayers([citizenRequestLayer]);
+            //map.addLayer(citizenRequestLayer);
+            map.addLayer(treeLightingLayer);
+            //map.addLayers([treeLightingLayer]);
+            map.infoWindow.resize(185, 100);
+
+        }
+
+        function formatNumber(value, key, data) {
+            return "<a href='tel:" + data.phone + "'>" + data.phone + "</a>";
+        }
+
+        function initEditor(results) {
+
+            //create the attribute inspector and customize the display
+            var layerInfo = [{
+                'featureLayer': citizenRequestLayer,
+                'showAttachments': false,
+                'showDeleteButton': false,
+                'isEditable': true,
+                'fieldInfos': [{
+                    'fieldName': 'NAME',
+                    'label': 'Name of Place',
+                    'isEditable': true
+                    
+                }, {
+                    'fieldName': 'COMMENT',
+                    'label': 'Comment (i.e. Great Staff)',
+                    'isEditable': true
+                },{
+                    'fieldName': 'TYPE',
+                    'label': 'Type',
+                    'isEditable': true
+                }]
+            }];
+
+            var attInspector = new esri.dijit.AttributeInspector({
+                layerInfos: layerInfo
+            }, "attributeDiv");
+
+            dojo.connect(attInspector, "onAttributeChange", function (feature, fieldName, newFieldValue) {
+                feature.attributes[fieldName] = newFieldValue;
+                feature.getLayer().applyEdits(null, [feature], null);
+            });
+
+            //dynamically create a pick list of renderer values
+            $.each(results, function (i, result) {
+                var infos = result.layer.renderer.infos;
+                $.each(infos, function (j, info) {
+                    var li = $('<li/>').bind('click', function (e) {
+                        //looks like (one) prevents the double-click issue
+                        map.setMapCursor('pointer');
+                        addFeature(info.label);
+                    }, false);
+                    var content = [];
+                    //create the list content
+                    content.push("<img src='" + info.symbol.url + "'/>");
+                    content.push("<a href='#mapPage'>" + info.label + "</a>");
+                    li.append(content.join(""));
+                    //add the list item to the feature type list
+                    $('#featureList').append(li);
+                });
+            });
+            //refresh the featurelist so the jquery mobile style is applied
+            $('#featureList').listview();
+            $('#featureList').listview('refresh');
+        }
+
+
+
+        function getType(item) {
+            var returnType = null;
+            $.each(citizenRequestLayer.types, function (index, type) {
+                if (type.name === item) {
+                    returnType = type.templates[0];
+                }
+            });
+            return returnType;
+        }
+
+        function addFeature(item) {
+            map.setMapCursor('default');
+            //setup the template and display the attributes window
+            var itemTemplate = getType(item);
+
+            //setup the click event to capture a feature then display the attribute dialog
+            var mapclickHandler = dojo.connect(map, 'onClick', function (evt) {
+                //only capture one click
+                dojo.disconnect(mapclickHandler);
+
+
+                //set the default date and the click geometry
+                var currentDate = new Date();
+
+
+                var newAttributes = dojo.mixin({}, itemTemplate.prototype.attributes);
+                newAttributes.requestdate = Date.UTC(currentDate.getUTCFullYear(), currentDate.getUTCMonth(), currentDate.getUTCDate(), currentDate.getUTCHours(), currentDate.getUTCMinutes(), currentDate.getUTCSeconds(), 0);
+                var newGraphic = new esri.Graphic(evt.mapPoint, null, newAttributes);
+
+                citizenRequestLayer.applyEdits([newGraphic], null, null, function (adds) {
+                    var query = new esri.tasks.Query();
+                    var res = adds[0];
+                    query.objectIds = [res.objectId];
+
+                    citizenRequestLayer.queryFeatures(query, function (result) {
+
+                        if (result.features.length > 0) {
+                            var feat = result.features[0];
+                            var pt = esri.geometry.webMercatorToGeographic(feat.geometry);
+
+                            locator.locationToAddress(pt, 100, function (candidate) {
+
+                                var address = [];
+                                var displayAddress;
+                                if (candidate.address) {
+                                    if (candidate.address.Address) {
+                                        address.push(candidate.address.Address);
+                                    }
+                                    if (candidate.address.City) {
+                                        address.push(candidate.address.City + ",");
+                                    }
+                                    if (candidate.address.State) {
+                                        address.push(candidate.address.State);
+                                    }
+                                    if (candidate.address.Zip) {
+                                        address.push(candidate.address.Zip);
+                                    }
+                                    displayAddress = address.join(" ");
+
+                                } else {
+                                    displayAddress = 'No address for this location';
+                                }
+                                //display the geocoded address on the attribute dialog.
+                                $.mobile.changePage("#attributeDialog", null, true, true);
+                                $('#currentAddress')[0].textContent = displayAddress;
+                            });
+                        }
+                    });
+
+
+
+                });
+
+
+            });
+
+        }
+        //use the geolocation api to get the current location
+        function getLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(zoomToLocation, locationError);
+            }
+        }
+
+        function locationError(error) {
+            switch (error.code) {
+                case error.PERMISSION_DENIED:
+                    console.log("Location not provided");
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    console.log("Current location not available");
+                    break;
+                case error.TIMEOUT:
+                    console.log("Timeout");
+                    break;
+                default:
+                    console.log("unknown error");
+                    break;
+            }
+        }
+
+        function zoomToLocation(location) {
+
+            var pt = esri.geometry.geographicToWebMercator(new esri.geometry.Point(location.coords.longitude, location.coords.latitude));
+            map.centerAndZoom(pt, 18);
+        }
+
+        function jQueryReady() {
+		
+            $('#mapPage').bind('pageshow', function (event, ui) {
+                resizeMap();
+			});
+			
+			$('#featureInfoDialog').live('pagehide', function (event, ui) {
+                // fire event on info dialog close
+			});
+			
+			$("#infoLink").click();
+
+        }
+		
+
+        function orientationChanged() {
+            if (map) {
+                resizeMap();
+            }
+        }
+
+        function resizeMap() {
+            if (map) {
+					$('#map').css("height", screen.height);
+					$('#map').css("width", "auto");
+
+					map.reposition();
+					map.resize();
+            }
+        }
+
+      function toggleLayer(val){
+      if(val.name === 'checkbox-1a'){
+         treeLightingLayer.visible ? treeLightingLayer.hide():treeLightingLayer.show();
+         }
+      else{
+        citizenRequestLayer.visible ? citizenRequestLayer.hide():citizenRequestLayer.show();
+      }
+    }
+
+
+    </script>
+  </head>
+  
+  <body class="claro">
+
+
+    <!--Each view is defined by a data-role="page" attribute-->
+    <div data-role="page" id="mapPage" style="width:100%;height:100%;overflow:hidden;"
+    data-theme="b">
+      <div id="header" data-role="header">
+        <h1>Winter Activities & Hot Spots</h1>
+        <!--<a href="#" id="locateIcon" data-role="button" data-inline="true" onclick="getLocation();">Locate</a>-->
+      </div>
+      <div id="footer" class="ui-bar">
+                <a href="#" id="A1" data-role="button" data-inline="true" data-icon="search" onclick="getLocation();">Locate</a>
+                <a href="#featureInfoDialog" data-mini="true" data-role="button" data-icon="info" id="infoLink" data-rel="dialog">Info</a>
+                <a href="#layerInfoDialog" data-mini="true" data-role="button" data-icon="check">Layers</a>
+                <a href="#featureDialog" data-mini="true" data-role="button" data-icon="star">Add</a>
+                <!-- <ul data-role="controlgroup" data-type="horizontal" class="localnav">
+				<li><a href="buttons-types.html" data-role="button" data-transition="fade" class="ui-btn-active">Basics</a></li>
+				<li><a href="buttons-options.html" data-role="button" data-transition="fade">Options</a></li>
+				<li><a href="buttons-methods.html" data-role="button" data-transition="fade">Methods</a></li>
+				<li><a href="buttons-events.html" data-role="button" data-transition="fade">Events</a></li>
+			</ul>-->
+        
+      </div>
+      <div data-role="content" id="mapcontent" style="padding:0;width:100%;height:100%;">
+        <div id="map"></div>
+      </div>
+    </div>
+    <!--Attribute Insepctor Dialog-->
+    <div data-role="page" id="attributeDialog" data-theme="b">
+      <div data-role="header" data-nobackbtn="true">
+        <h1>More Info</h1>
+      </div>
+      <div data-role="content" data-inset="true">
+        <div>
+          <div id="currentAddress" style="font-weight:bold;text-align:center;width:100%;"></div>
+        </div>
+        <div id="attributeDiv"></div>
+        <a href="#mapPage" data-role="button">Save</a>
+      </div>
+    </div>
+    <!--Feature Collection Dialog-->
+    <div data-role="page" id="featureDialog" data-theme="b">
+      <div data-role="header">
+        <h1>Activity Type</h1>
+      </div>
+      <div data-role="content">
+        <ul data-inset="true" data-role="listview" id="featureList"></ul>
+      </div>
+    </div>
+    <div data-role="page" id="featureInfoDialog" data-theme="b">
+      <div data-role="header">
+        <h1>Winter Activities City of Boston</h1>
+      </div>
+		<div data-role="content" data-theme="c">
+			<p>Sed ut perspiciatis, unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam eaque ipsa, quae ab illo inventore veritatis et quasi architecto beatae vitae dicta sunt, explicabo. </p>
+			<a href="DefaultJ.htm" data-role="button" data-rel="back" data-theme="b">Continue</a>
+		</div>
+    </div>
+    <div data-role="page" id="layerInfoDialog" data-theme="b">
+      <div data-role="header">
+        <h1>Toggle Layers</h1>
+      </div>
+      <div  data-role="fieldcontain">
+			 	<fieldset data-role="controlgroup">
+					<legend></legend>
+					<input type="checkbox" name="checkbox-1a" id="checkbox-1a" checked="treeLightingLayer.visible" onChange="toggleLayer(this);" class="custom" />
+					<label for="checkbox-1a">Tree Lightings</label>
+					<input type="checkbox" name="checkbox-2a" id="checkbox-2a" checked="citizenRequestLayer.visible" onChange="toggleLayer(this);" class="custom" />
+					<label for="checkbox-2a">Holiday Hotspots</label>
+			    </fieldset>
+			</div>
+    </div>
+  </body>
+
+</html>
+
